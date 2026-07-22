@@ -1,0 +1,111 @@
+import {
+  propagate,
+  twoline2satrec,
+  type SatRec,
+} from "satellite.js";
+import { Cartesian3, JulianDate } from "cesium";
+
+const TWO_PI = Math.PI * 2;
+const KM_TO_M = 1000;
+const ORBIT_SAMPLES = 180;
+
+export type PropagatedSat = {
+  id: number;
+  noradId: number;
+  name: string;
+  satrec: SatRec;
+  periodMinutes: number;
+};
+
+export function parseSatellite(
+  id: number,
+  noradId: number,
+  name: string,
+  tleLine1: string,
+  tleLine2: string,
+): PropagatedSat | null {
+  try {
+    const satrec = twoline2satrec(tleLine1, tleLine2);
+    if (
+      satrec.error !== 0 ||
+      !Number.isFinite(satrec.no) ||
+      satrec.no <= 0
+    ) {
+      return null;
+    }
+
+    const periodMinutes = TWO_PI / satrec.no;
+    if (!Number.isFinite(periodMinutes) || periodMinutes <= 0) {
+      return null;
+    }
+
+    return { id, noradId, name, satrec, periodMinutes };
+  } catch {
+    return null;
+  }
+}
+
+function julianToDate(time: JulianDate): Date {
+  return JulianDate.toDate(time);
+}
+
+function positionEciAt(
+  satrec: SatRec,
+  time: JulianDate,
+): { x: number; y: number; z: number } | null {
+  const date = julianToDate(time);
+  const pv = propagate(satrec, date);
+  const positionEci = pv.position;
+  if (!positionEci || typeof positionEci === "boolean") {
+    return null;
+  }
+
+  if (
+    !Number.isFinite(positionEci.x) ||
+    !Number.isFinite(positionEci.y) ||
+    !Number.isFinite(positionEci.z)
+  ) {
+    return null;
+  }
+
+  return positionEci;
+}
+
+/**
+ * Sample an inertial SGP4 trajectory around centerTime. The extra padding
+ * keeps Cesium interpolation populated while the user scrubs the clock.
+ */
+export function sampleInertialOrbit(
+  sat: PropagatedSat,
+  centerTime: JulianDate,
+  paddingMinutes: number,
+  samplesPerRevolution = ORBIT_SAMPLES,
+): { times: JulianDate[]; positions: Cartesian3[] } {
+  const periodSeconds = sat.periodMinutes * 60;
+  const stepSeconds = periodSeconds / samplesPerRevolution;
+  const halfSpanSeconds = periodSeconds / 2 + paddingMinutes * 60;
+  const stepsEachSide = Math.ceil(halfSpanSeconds / stepSeconds);
+  const times: JulianDate[] = [];
+  const positions: Cartesian3[] = [];
+
+  for (let i = -stepsEachSide; i <= stepsEachSide; i++) {
+    const t = JulianDate.addSeconds(
+      centerTime,
+      stepSeconds * i,
+      new JulianDate(),
+    );
+    const positionEci = positionEciAt(sat.satrec, t);
+    if (positionEci) {
+      times.push(t);
+      positions.push(
+        new Cartesian3(
+          positionEci.x * KM_TO_M,
+          positionEci.y * KM_TO_M,
+          positionEci.z * KM_TO_M,
+        ),
+      );
+    }
+  }
+
+  return { times, positions };
+}

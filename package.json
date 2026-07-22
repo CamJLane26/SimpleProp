@@ -1,0 +1,14 @@
+{
+  "name": "simpleprop",
+  "private": true,
+  "workspaces": [
+    "apps/api",
+    "apps/web"
+  ],
+  "scripts": {
+    "dev:api": "npm run dev -w @simpleprop/api",
+    "dev:web": "npm run dev -w @simpleprop/web",
+    "build": "npm run build -w @simpleprop/api && npm run build -w @simpleprop/web",
+    "typecheck": "npm run typecheck -w @simpleprop/api && npm run typecheck -w @simpleprop/web"
+  }
+}
