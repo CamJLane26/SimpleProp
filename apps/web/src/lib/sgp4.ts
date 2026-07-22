@@ -10,7 +10,7 @@ const KM_TO_M = 1000;
 const ORBIT_SAMPLES = 180;
 
 export type PropagatedSat = {
-  id: number;
+  id: string;
   noradId: number;
   name: string;
   satrec: SatRec;
@@ -18,7 +18,7 @@ export type PropagatedSat = {
 };
 
 export function parseSatellite(
-  id: number,
+  id: string,
   noradId: number,
   name: string,
   tleLine1: string,

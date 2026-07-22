@@ -1,14 +1,53 @@
--- SimpleProp: satellite catalog schema + public TLE seed (CelesTrak)
-CREATE TABLE IF NOT EXISTS satellites (
+-- SimpleProp: fresh satellite catalog + public TLE seed (CelesTrak)
+-- NORAD IDs are not unique: multiple catalog rows may share a NORAD ID.
+
+CREATE OR REPLACE FUNCTION parse_tle_epoch(tle_line1 TEXT)
+RETURNS TIMESTAMPTZ
+LANGUAGE SQL
+IMMUTABLE
+STRICT
+AS $$
+  WITH parts AS (
+    SELECT
+      substring(tle_line1 FROM 19 FOR 2)::INTEGER AS short_year,
+      substring(tle_line1 FROM 21 FOR 12)::DOUBLE PRECISION AS day_of_year
+  )
+  SELECT
+    make_timestamptz(
+      CASE
+        WHEN short_year < 57 THEN 2000 + short_year
+        ELSE 1900 + short_year
+      END,
+      1, 1, 0, 0, 0, 'UTC'
+    ) + (day_of_year - 1) * INTERVAL '1 day'
+  FROM parts;
+$$;
+
+CREATE TABLE satellites (
   id          SERIAL PRIMARY KEY,
-  norad_id    INTEGER UNIQUE NOT NULL,
+  norad_id    INTEGER NOT NULL,
   name        TEXT NOT NULL,
-  tle_line1   TEXT NOT NULL,
-  tle_line2   TEXT NOT NULL,
   enabled     BOOLEAN NOT NULL DEFAULT TRUE
 );
 
-INSERT INTO satellites (norad_id, name, tle_line1, tle_line2) VALUES
+CREATE TABLE satellite_tles (
+  id            BIGSERIAL PRIMARY KEY,
+  satellite_id  INTEGER NOT NULL REFERENCES satellites(id) ON DELETE CASCADE,
+  epoch         TIMESTAMPTZ NOT NULL,
+  tle_line1     TEXT NOT NULL,
+  tle_line2     TEXT NOT NULL,
+  UNIQUE (satellite_id, epoch)
+);
+
+CREATE TEMP TABLE seed_satellites (
+  seed_id     SERIAL PRIMARY KEY,
+  norad_id    INTEGER NOT NULL,
+  name        TEXT NOT NULL,
+  tle_line1   TEXT NOT NULL,
+  tle_line2   TEXT NOT NULL
+);
+
+INSERT INTO seed_satellites (norad_id, name, tle_line1, tle_line2) VALUES
   (16908, 'AJISAI (EGS)', '1 16908U 86061A   26202.58051159 -.00000106  00000+0 -57681-4 0  9990', '2 16908  50.0104  41.6366 0011076 268.1861 131.6506 12.44516675484671'),
   (5560, 'ASTEX 1', '1 05560U 71089A   26202.41887239  .00000358  00000+0  90828-4 0  9991', '2 05560  92.7012 194.8814 0015469   2.0272 358.0994 14.50875060881698'),
   (694, 'ATLAS CENTAUR 2', '1 00694U 63047A   26202.27386369  .00000610  00000+0  60182-4 0  9992', '2 00694  30.3527 168.7573 0545670 178.1377 182.1400 14.12569898150521'),
@@ -62,8 +101,26 @@ INSERT INTO satellites (norad_id, name, tle_line1, tle_line2) VALUES
   (44768, 'STARLINK-1063', '1 44768U 19074BH  26202.64038470  .00052650  00000+0  79208-3 0  9990', '2 44768  53.1528 304.2669 0004406 327.9481  32.1262 15.54337989369001'),
   (44927, 'STARLINK-1114', '1 44927U 20001P   26202.58313563  .00064105  00000+0  43856-3 0  9999', '2 44927  53.0398  34.9527 0001494 265.3049  94.7799 15.74191635361022'),
   (45047, 'STARLINK-1131', '1 45047U 20006D   26201.76707484  .00023415  00000+0  29329-3 0  9994', '2 45047  53.1546   8.4283 0000575  54.9946 305.1121 15.59691975357123'),
-  (45060, 'STARLINK-1166', '1 45060U 20006S   26202.58391014  .00054129  00000+0  45141-3 0  9994', '2 45060  53.0432 343.8433 0001428 344.2003  15.8968 15.69562296357512')
-ON CONFLICT (norad_id) DO UPDATE SET
-  name = EXCLUDED.name,
-  tle_line1 = EXCLUDED.tle_line1,
-  tle_line2 = EXCLUDED.tle_line2;
+  (45060, 'STARLINK-1166', '1 45060U 20006S   26202.58391014  .00054129  00000+0  45141-3 0  9994', '2 45060  53.0432 343.8433 0001428 344.2003  15.8968 15.69562296357512');
+
+WITH inserted AS (
+  INSERT INTO satellites (norad_id, name)
+  SELECT norad_id, name
+  FROM seed_satellites
+  ORDER BY seed_id
+  RETURNING id, norad_id, name
+),
+numbered_inserted AS (
+  SELECT
+    id,
+    row_number() OVER (ORDER BY id) AS seed_id
+  FROM inserted
+)
+INSERT INTO satellite_tles (satellite_id, epoch, tle_line1, tle_line2)
+SELECT
+  numbered_inserted.id,
+  parse_tle_epoch(seed_satellites.tle_line1),
+  seed_satellites.tle_line1,
+  seed_satellites.tle_line2
+FROM numbered_inserted
+JOIN seed_satellites USING (seed_id);

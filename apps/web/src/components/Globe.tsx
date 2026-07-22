@@ -4,6 +4,9 @@ import {
   Cartesian3,
   ClockRange,
   Color,
+  CompositePositionProperty,
+  CompositeProperty,
+  ConstantProperty,
   Ion,
   JulianDate,
   LabelStyle,
@@ -11,6 +14,7 @@ import {
   ReferenceFrame,
   SampledPositionProperty,
   Terrain,
+  TimeInterval,
   Viewer,
   type Entity,
   type InterpolationAlgorithm,
@@ -40,7 +44,7 @@ type Props = {
 };
 
 type EntityBundle = {
-  sat: PropagatedSat;
+  satellite: Satellite;
   entity: Entity;
 };
 
@@ -48,14 +52,22 @@ function isIss(noradId: number): boolean {
   return noradId === 25544;
 }
 
-function createPositionProperty(
+type PositionHistory = {
+  property: CompositePositionProperty;
+  leadTime: CompositeProperty;
+  trailTime: CompositeProperty;
+  resolution: CompositeProperty;
+};
+
+function createSampledProperty(
   sat: PropagatedSat,
   center: JulianDate,
+  paddingMinutes: number,
 ): SampledPositionProperty {
   const { times, positions } = sampleInertialOrbit(
     sat,
     center,
-    SCRUB_HALF_MINUTES,
+    paddingMinutes,
   );
   const property = new SampledPositionProperty(ReferenceFrame.INERTIAL);
   property.setInterpolationOptions({
@@ -65,6 +77,114 @@ function createPositionProperty(
   });
   property.addSamples(times, positions);
   return property;
+}
+
+function createPositionHistory(
+  satellite: Satellite,
+  center: JulianDate,
+): PositionHistory | null {
+  const parsed = satellite.tles
+    .map((tle) => {
+      const epochDate = new Date(tle.epoch);
+      const propagated = parseSatellite(
+        tle.id,
+        satellite.noradId,
+        satellite.name,
+        tle.tleLine1,
+        tle.tleLine2,
+      );
+      if (!propagated || Number.isNaN(epochDate.getTime())) return null;
+      return {
+        epoch: JulianDate.fromDate(epochDate),
+        propagated,
+      };
+    })
+    .filter(
+      (
+        entry,
+      ): entry is { epoch: JulianDate; propagated: PropagatedSat } =>
+        entry !== null,
+    )
+    .sort((a, b) => JulianDate.compare(a.epoch, b.epoch));
+
+  if (parsed.length === 0) return null;
+
+  const maxPeriodMinutes = Math.max(
+    ...parsed.map((entry) => entry.propagated.periodMinutes),
+  );
+  const overallHalfSpanMinutes =
+    SCRUB_HALF_MINUTES + maxPeriodMinutes / 2;
+  const overallStart = JulianDate.addMinutes(
+    center,
+    -overallHalfSpanMinutes,
+    new JulianDate(),
+  );
+  const overallStop = JulianDate.addMinutes(
+    center,
+    overallHalfSpanMinutes,
+    new JulianDate(),
+  );
+  const property = new CompositePositionProperty(ReferenceFrame.INERTIAL);
+  const leadTime = new CompositeProperty();
+  const trailTime = new CompositeProperty();
+  const resolution = new CompositeProperty();
+
+  for (let i = 0; i < parsed.length; i++) {
+    const current = parsed[i];
+    const next = parsed[i + 1];
+    const start =
+      i === 0 || JulianDate.compare(current.epoch, overallStart) < 0
+        ? overallStart
+        : current.epoch;
+    const stop =
+      next && JulianDate.compare(next.epoch, overallStop) < 0
+        ? next.epoch
+        : overallStop;
+
+    if (JulianDate.compare(start, stop) >= 0) continue;
+
+    const extraPadding =
+      SCRUB_HALF_MINUTES +
+      (maxPeriodMinutes - current.propagated.periodMinutes) / 2;
+    const sampled = createSampledProperty(
+      current.propagated,
+      center,
+      extraPadding,
+    );
+    const isStopIncluded = !next || JulianDate.equals(stop, overallStop);
+    const periodSeconds = current.propagated.periodMinutes * 60;
+    const interval = {
+      start,
+      stop,
+      isStartIncluded: true,
+      // At an exact TLE epoch, the next (newer) interval owns the value.
+      isStopIncluded,
+    };
+
+    property.intervals.addInterval(
+      new TimeInterval({ ...interval, data: sampled }),
+    );
+    leadTime.intervals.addInterval(
+      new TimeInterval({
+        ...interval,
+        data: new ConstantProperty(periodSeconds / 2),
+      }),
+    );
+    trailTime.intervals.addInterval(
+      new TimeInterval({
+        ...interval,
+        data: new ConstantProperty(periodSeconds / 2),
+      }),
+    );
+    resolution.intervals.addInterval(
+      new TimeInterval({
+        ...interval,
+        data: new ConstantProperty(Math.max(10, periodSeconds / 180)),
+      }),
+    );
+  }
+
+  return { property, leadTime, trailTime, resolution };
 }
 
 export function Globe({
@@ -186,18 +306,11 @@ export function Globe({
     const center = viewer.clock.currentTime;
 
     for (const sat of satellites) {
-      const parsed = parseSatellite(
-        sat.id,
-        sat.noradId,
-        sat.name,
-        sat.tleLine1,
-        sat.tleLine2,
-      );
-      if (!parsed) continue;
+      const history = createPositionHistory(sat, center);
+      if (!history) continue;
 
       const iss = isIss(sat.noradId);
-      const periodSeconds = parsed.periodMinutes * 60;
-      const position = createPositionProperty(parsed, center);
+      const { property: position } = history;
 
       const entity = viewer.entities.add({
         id: `sat-${sat.id}`,
@@ -224,9 +337,9 @@ export function Globe({
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
         path: {
-          leadTime: periodSeconds / 2,
-          trailTime: periodSeconds / 2,
-          resolution: Math.max(10, periodSeconds / 180),
+          leadTime: history.leadTime,
+          trailTime: history.trailTime,
+          resolution: history.resolution,
           width: iss ? 2 : 1,
           material: iss
             ? Color.fromCssColorString("#fbbf24").withAlpha(0.65)
@@ -236,7 +349,7 @@ export function Globe({
       });
 
       bundlesRef.current.set(sat.id, {
-        sat: parsed,
+        satellite: sat,
         entity,
       });
     }
@@ -257,7 +370,14 @@ export function Globe({
 
   const resamplePositions = (center: JulianDate) => {
     for (const bundle of bundlesRef.current.values()) {
-      bundle.entity.position = createPositionProperty(bundle.sat, center);
+      const history = createPositionHistory(bundle.satellite, center);
+      if (!history) continue;
+      bundle.entity.position = history.property;
+      if (bundle.entity.path) {
+        bundle.entity.path.leadTime = history.leadTime;
+        bundle.entity.path.trailTime = history.trailTime;
+        bundle.entity.path.resolution = history.resolution;
+      }
     }
   };
 

@@ -13,9 +13,11 @@ const DATABASE_URL =
 const pool = new Pool({ connectionString: DATABASE_URL });
 
 type SatelliteRow = {
-  id: number;
+  satellite_id: number;
   norad_id: number;
   name: string;
+  tle_id: string;
+  epoch: Date;
   tle_line1: string;
   tle_line2: string;
 };
@@ -31,21 +33,55 @@ app.get("/health", async () => ({ ok: true }));
 app.get("/api/satellites", async (_request, reply) => {
   try {
     const result = await pool.query<SatelliteRow>(
-      `SELECT id, norad_id, name, tle_line1, tle_line2
-       FROM satellites
-       WHERE enabled = TRUE
-       ORDER BY name ASC`,
+      `SELECT
+         s.id AS satellite_id,
+         s.norad_id,
+         s.name,
+         t.id AS tle_id,
+         t.epoch,
+         t.tle_line1,
+         t.tle_line2
+       FROM satellites s
+       JOIN satellite_tles t ON t.satellite_id = s.id
+       WHERE s.enabled = TRUE
+       ORDER BY s.name ASC, t.epoch ASC`,
     );
 
-    const satellites = result.rows.map((row) => ({
-      id: row.id,
-      noradId: row.norad_id,
-      name: row.name,
-      tleLine1: row.tle_line1,
-      tleLine2: row.tle_line2,
-    }));
+    const byId = new Map<
+      number,
+      {
+        id: number;
+        noradId: number;
+        name: string;
+        tles: {
+          id: string;
+          epoch: string;
+          tleLine1: string;
+          tleLine2: string;
+        }[];
+      }
+    >();
 
-    return satellites;
+    for (const row of result.rows) {
+      let satellite = byId.get(row.satellite_id);
+      if (!satellite) {
+        satellite = {
+          id: row.satellite_id,
+          noradId: row.norad_id,
+          name: row.name,
+          tles: [],
+        };
+        byId.set(row.satellite_id, satellite);
+      }
+      satellite.tles.push({
+        id: row.tle_id,
+        epoch: row.epoch.toISOString(),
+        tleLine1: row.tle_line1,
+        tleLine2: row.tle_line2,
+      });
+    }
+
+    return [...byId.values()];
   } catch (err) {
     app.log.error(err);
     return reply.status(500).send({ error: "Failed to load satellites" });

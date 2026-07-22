@@ -73,7 +73,11 @@ docker compose up --build
 | API | http://localhost:3001/api/satellites |
 | Postgres | localhost:5433 → container 5432 (`simpleprop` / `simpleprop` / db `simpleprop`) |
 
-`db/init.sql` runs on first Postgres volume create. To re-seed from scratch:
+`db/init.sql` runs on first Postgres volume create. Schema and seed are
+fresh-start only: satellite metadata lives in `satellites` (NORAD IDs are not
+unique), and epoch-ordered element sets live in `satellite_tles`.
+
+To wipe and re-seed:
 
 ```bash
 docker compose down -v
@@ -115,8 +119,14 @@ npm run build
     "id": 1,
     "noradId": 25544,
     "name": "ISS (ZARYA)",
-    "tleLine1": "1 25544U ...",
-    "tleLine2": "2 25544 ..."
+    "tles": [
+      {
+        "id": "1",
+        "epoch": "2026-07-21T04:27:10.177Z",
+        "tleLine1": "1 25544U ...",
+        "tleLine2": "2 25544 ..."
+      }
+    ]
   }
 ]
 ```
@@ -126,11 +136,14 @@ Read-only; no write endpoints.
 ## Frontend behavior
 
 1. Fetch catalog once on mount.
-2. Parse TLEs with `satellite.js` and create Cesium entities (point + polyline trail). When an ion token is configured, Cesium World Terrain is enabled.
+2. Parse each satellite's epoch-ordered TLE history with `satellite.js`. At a newer TLE's exact epoch, propagation switches to that TLE; times before the first epoch use the earliest available TLE.
 3. Cesium `Clock` drives time (60× when playing).
-4. Each visible sat: SGP4 → ECI → ECEF → entity position each frame (`CallbackProperty`).
-5. Orbit trails: sample ~90 points over one period (`2π / n` from TLE mean motion).
+4. Cesium interpolates piecewise inertial SGP4 samples for both the marker and path, keeping motion smooth within each TLE segment without interpolating across an epoch switch.
+5. Orbit paths show one period (`2π / n` from the active TLE's mean motion). When an ion token is configured, Cesium World Terrain is enabled.
 6. Checklist toggles show/hide point + trail without refetching.
+
+See [`TLE_TRANSITIONS.md`](TLE_TRANSITIONS.md) for the current hard-switch
+semantics and a future display-only blending design.
 
 ## Alternative: server-side propagation (not implemented)
 
