@@ -32,6 +32,20 @@ not unique in this schema, so they are not a safe join key by themselves.
 The API returns every set sorted by epoch. Browser tabs fetch that history once
 on page load; database changes become visible after reloading the page.
 
+## Demo seed transitions
+
+Fresh databases seeded by `db/init.sql` include two example transitions inside
+the ±90 minute scrub window (relative to DB init time):
+
+| Satellite | NORAD | Newer TLE epoch | How to see it |
+|---|---|---|---|
+| ISS (ZARYA) | 25544 | ~+30 minutes | Play or scrub forward from Now |
+| HST | 20580 | ~-30 minutes | Scrub backward from Now |
+
+The newer demo TLEs intentionally offset mean anomaly so the hard switch is
+visible as a position jump. These are synthetic demo elements, not operational
+ephemerides.
+
 A hard switch is orbitally explicit but may cause a visible jump. TLEs are
 independent fitted solutions, and propagating adjacent sets to the same epoch
 does not guarantee identical position or velocity.

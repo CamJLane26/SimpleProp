@@ -124,3 +124,110 @@ SELECT
   seed_satellites.tle_line2
 FROM numbered_inserted
 JOIN seed_satellites USING (seed_id);
+
+-- Helpers for demo TLE transitions inside the ±90 minute scrub window.
+CREATE OR REPLACE FUNCTION tle_checksum(line_body TEXT)
+RETURNS INTEGER
+LANGUAGE SQL
+IMMUTABLE
+STRICT
+AS $$
+  SELECT (
+    SELECT SUM(
+      CASE
+        WHEN ch ~ '[0-9]' THEN ch::INTEGER
+        WHEN ch = '-' THEN 1
+        ELSE 0
+      END
+    )
+    FROM unnest(string_to_array(line_body, NULL)) AS ch
+  ) % 10;
+$$;
+
+CREATE OR REPLACE FUNCTION rewrite_tle_line1_epoch(
+  line1 TEXT,
+  new_epoch TIMESTAMPTZ
+)
+RETURNS TEXT
+LANGUAGE plpgsql
+IMMUTABLE
+STRICT
+AS $$
+DECLARE
+  year_two INTEGER;
+  day_of_year DOUBLE PRECISION;
+  epoch_field TEXT;
+  body TEXT;
+BEGIN
+  year_two := EXTRACT(YEAR FROM new_epoch AT TIME ZONE 'UTC')::INTEGER % 100;
+  day_of_year :=
+    EXTRACT(DOY FROM new_epoch AT TIME ZONE 'UTC')::DOUBLE PRECISION
+    + EXTRACT(HOUR FROM new_epoch AT TIME ZONE 'UTC')::DOUBLE PRECISION / 24.0
+    + EXTRACT(MINUTE FROM new_epoch AT TIME ZONE 'UTC')::DOUBLE PRECISION / 1440.0
+    + EXTRACT(SECOND FROM new_epoch AT TIME ZONE 'UTC')::DOUBLE PRECISION / 86400.0;
+  epoch_field :=
+    lpad(year_two::TEXT, 2, '0')
+    || trim(to_char(day_of_year, 'FM000.00000000'));
+  IF char_length(epoch_field) <> 14 THEN
+    RAISE EXCEPTION 'Invalid TLE epoch field %', epoch_field;
+  END IF;
+
+  body := overlay(rpad(left(line1, 68), 68, ' ')
+    PLACING epoch_field FROM 19 FOR 14);
+  RETURN body || tle_checksum(body)::TEXT;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION bump_tle_line2_mean_anomaly(
+  line2 TEXT,
+  delta_deg DOUBLE PRECISION
+)
+RETURNS TEXT
+LANGUAGE plpgsql
+IMMUTABLE
+STRICT
+AS $$
+DECLARE
+  mean_anomaly DOUBLE PRECISION;
+  updated TEXT;
+  body TEXT;
+BEGIN
+  mean_anomaly := substring(line2 FROM 44 FOR 8)::DOUBLE PRECISION;
+  mean_anomaly := MOD(
+    (mean_anomaly + delta_deg + 360.0)::NUMERIC,
+    360.0::NUMERIC
+  )::DOUBLE PRECISION;
+  updated := overlay(rpad(left(line2, 68), 68, ' ')
+    PLACING lpad(to_char(mean_anomaly, 'FM990.0000'), 8, ' ')
+    FROM 44 FOR 8);
+  body := left(updated, 68);
+  RETURN body || tle_checksum(body)::TEXT;
+END;
+$$;
+
+-- Demo transitions:
+--   ISS  — newer TLE ~+30 minutes from DB init (scrub forward to see the jump)
+--   HST  — newer TLE ~-30 minutes from DB init (scrub backward from "Now")
+INSERT INTO satellite_tles (satellite_id, epoch, tle_line1, tle_line2)
+SELECT
+  s.id,
+  parse_tle_epoch(rewrite_tle_line1_epoch(t.tle_line1, clock_timestamp() + INTERVAL '30 minutes')),
+  rewrite_tle_line1_epoch(t.tle_line1, clock_timestamp() + INTERVAL '30 minutes'),
+  bump_tle_line2_mean_anomaly(t.tle_line2, 18.0)
+FROM satellites s
+JOIN satellite_tles t ON t.satellite_id = s.id
+WHERE s.norad_id = 25544
+ORDER BY t.epoch ASC
+LIMIT 1;
+
+INSERT INTO satellite_tles (satellite_id, epoch, tle_line1, tle_line2)
+SELECT
+  s.id,
+  parse_tle_epoch(rewrite_tle_line1_epoch(t.tle_line1, clock_timestamp() - INTERVAL '30 minutes')),
+  rewrite_tle_line1_epoch(t.tle_line1, clock_timestamp() - INTERVAL '30 minutes'),
+  bump_tle_line2_mean_anomaly(t.tle_line2, -22.0)
+FROM satellites s
+JOIN satellite_tles t ON t.satellite_id = s.id
+WHERE s.norad_id = 20580
+ORDER BY t.epoch ASC
+LIMIT 1;
