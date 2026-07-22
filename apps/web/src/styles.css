@@ -183,7 +183,7 @@ body,
 
 .time-controls {
   display: grid;
-  grid-template-columns: auto auto 1fr auto;
+  grid-template-columns: auto auto auto auto 1fr auto;
   gap: 0.65rem;
   align-items: center;
   padding: 0.65rem 0.85rem;
@@ -193,6 +193,43 @@ body,
 
 .play-btn {
   min-width: 4.5rem;
+}
+
+.direction-group {
+  display: inline-flex;
+  gap: 0.3rem;
+}
+
+.dir-btn.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.speed-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.speed-label {
+  white-space: nowrap;
+}
+
+.speed-input {
+  width: 4.25rem;
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  background: var(--control);
+  color: var(--text);
+  padding: 0.3rem 0.4rem;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+}
+
+.speed-suffix {
+  color: var(--muted);
 }
 
 .scrubber {
@@ -207,7 +244,7 @@ body,
   white-space: nowrap;
 }
 
-@media (max-width: 800px) {
+@media (max-width: 900px) {
   .main {
     grid-template-columns: 1fr;
     grid-template-rows: minmax(160px, 30%) 1fr;
@@ -219,8 +256,12 @@ body,
   }
 
   .time-controls {
-    grid-template-columns: auto auto 1fr;
-    grid-template-rows: auto auto;
+    grid-template-columns: auto auto auto auto;
+    grid-template-rows: auto auto auto;
+  }
+
+  .scrubber {
+    grid-column: 1 / -1;
   }
 
   .clock-label {

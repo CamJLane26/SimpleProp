@@ -1,15 +1,22 @@
 import { useCallback, useMemo, useState } from "react";
 import { Globe } from "./components/Globe";
 import { SatellitePanel } from "./components/SatellitePanel";
-import { TimeControls } from "./components/TimeControls";
+import {
+  TimeControls,
+  type PlaybackDirection,
+} from "./components/TimeControls";
 import { useSatellites } from "./hooks/useSatellites";
 
 const SCRUB_HALF_MINUTES = 90;
+const DEFAULT_SPEED = 1;
 
 export default function App() {
   const catalog = useSatellites();
   const [visibleIds, setVisibleIds] = useState<Set<number> | null>(null);
   const [playing, setPlaying] = useState(true);
+  const [direction, setDirection] =
+    useState<PlaybackDirection>("forward");
+  const [speed, setSpeed] = useState(DEFAULT_SPEED);
   const [displayOffset, setDisplayOffset] = useState(0);
   const [scrubOffset, setScrubOffset] = useState(0);
   const [scrubNonce, setScrubNonce] = useState(0);
@@ -26,6 +33,9 @@ export default function App() {
     if (satellites.length === 0) return new Set<number>();
     return new Set(satellites.map((s) => s.id));
   }, [visibleIds, satellites]);
+
+  const playbackMultiplier =
+    (direction === "forward" ? 1 : -1) * speed;
 
   const handleToggle = useCallback(
     (id: number) => {
@@ -99,6 +109,7 @@ export default function App() {
               satellites={satellites}
               visibleIds={effectiveVisible}
               playing={playing}
+              playbackMultiplier={playbackMultiplier}
               scrubOffsetMinutes={scrubOffset}
               scrubNonce={scrubNonce}
               resetToNowNonce={resetToNowNonce}
@@ -114,6 +125,10 @@ export default function App() {
           <TimeControls
             playing={playing}
             onTogglePlay={() => setPlaying((p) => !p)}
+            direction={direction}
+            onDirectionChange={setDirection}
+            speed={speed}
+            onSpeedChange={setSpeed}
             offsetMinutes={scrubberValue}
             minMinutes={-SCRUB_HALF_MINUTES}
             maxMinutes={SCRUB_HALF_MINUTES}

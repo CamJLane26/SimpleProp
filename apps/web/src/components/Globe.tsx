@@ -28,12 +28,13 @@ import {
 } from "../lib/sgp4";
 
 const SCRUB_HALF_MINUTES = 90;
-const MULTIPLIER = 60;
 
 type Props = {
   satellites: Satellite[];
   visibleIds: Set<number>;
   playing: boolean;
+  /** Signed Cesium clock multiplier: positive forward, negative reverse. */
+  playbackMultiplier: number;
   /** Minutes relative to session epoch; applied only when scrubNonce changes. */
   scrubOffsetMinutes: number;
   scrubNonce: number;
@@ -191,6 +192,7 @@ export function Globe({
   satellites,
   visibleIds,
   playing,
+  playbackMultiplier,
   scrubOffsetMinutes,
   scrubNonce,
   resetToNowNonce,
@@ -240,7 +242,7 @@ export function Globe({
     });
 
     viewer.clock.shouldAnimate = true;
-    viewer.clock.multiplier = MULTIPLIER;
+    viewer.clock.multiplier = 1;
     viewer.clock.clockRange = ClockRange.CLAMPED;
     epochRef.current = JulianDate.now();
     viewer.clock.currentTime = JulianDate.clone(epochRef.current);
@@ -264,16 +266,19 @@ export function Globe({
     let lastUiUpdateMs = 0;
     const removeTick = viewer.clock.onTick.addEventListener((clock) => {
       const current = clock.currentTime;
-      const reachedEnd =
+      const atStart = JulianDate.compare(current, clock.startTime) <= 0;
+      const atStop = JulianDate.compare(current, clock.stopTime) >= 0;
+      const hitBoundary =
         clock.shouldAnimate &&
-        JulianDate.compare(current, clock.stopTime) >= 0;
-      if (reachedEnd) {
+        ((clock.multiplier > 0 && atStop) ||
+          (clock.multiplier < 0 && atStart));
+      if (hitBoundary) {
         clock.shouldAnimate = false;
         callbacksRef.current.onPlaybackEnd();
       }
 
       const nowMs = performance.now();
-      if (!reachedEnd && nowMs - lastUiUpdateMs < 250) {
+      if (!hitBoundary && nowMs - lastUiUpdateMs < 250) {
         return;
       }
       lastUiUpdateMs = nowMs;
@@ -367,6 +372,12 @@ export function Globe({
     if (!viewer) return;
     viewer.clock.shouldAnimate = playing;
   }, [playing]);
+
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    viewer.clock.multiplier = playbackMultiplier;
+  }, [playbackMultiplier]);
 
   const resamplePositions = (center: JulianDate) => {
     for (const bundle of bundlesRef.current.values()) {

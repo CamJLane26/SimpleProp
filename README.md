@@ -137,7 +137,7 @@ Read-only; no write endpoints.
 
 1. Fetch catalog once on mount.
 2. Parse each satellite's epoch-ordered TLE history with `satellite.js`. At a newer TLE's exact epoch, propagation switches to that TLE; times before the first epoch use the earliest available TLE.
-3. Cesium `Clock` drives time (60× when playing).
+3. Cesium `Clock` drives time (default **1×** real-time; direction and speed are user-controlled).
 4. Cesium interpolates piecewise inertial SGP4 samples for both the marker and path, keeping motion smooth within each TLE segment without interpolating across an epoch switch.
 5. Orbit paths show one period (`2π / n` from the active TLE's mean motion). When an ion token is configured, Cesium World Terrain is enabled.
 6. Checklist toggles show/hide point + trail without refetching.
