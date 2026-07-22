@@ -125,7 +125,7 @@ SELECT
 FROM numbered_inserted
 JOIN seed_satellites USING (seed_id);
 
--- Helpers for demo TLE transitions inside the ±90 minute scrub window.
+-- Helpers for demo TLE transitions near session "Now".
 CREATE OR REPLACE FUNCTION tle_checksum(line_body TEXT)
 RETURNS INTEGER
 LANGUAGE SQL

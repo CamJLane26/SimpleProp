@@ -34,8 +34,8 @@ on page load; database changes become visible after reloading the page.
 
 ## Demo seed transitions
 
-Fresh databases seeded by `db/init.sql` include two example transitions inside
-the ±90 minute scrub window (relative to DB init time):
+Fresh databases seeded by `db/init.sql` include two example transitions near
+session “Now” (relative to DB init time):
 
 | Satellite | NORAD | Newer TLE epoch | How to see it |
 |---|---|---|---|

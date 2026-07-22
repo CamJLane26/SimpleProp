@@ -72,25 +72,42 @@ function positionEciAt(
 }
 
 /**
- * Sample an inertial SGP4 trajectory around centerTime. The extra padding
- * keeps Cesium interpolation populated while the user scrubs the clock.
+ * Sample an inertial SGP4 trajectory only over [start, stop].
+ * One step of padding on each side keeps Cesium Lagrange interpolation stable
+ * at interval boundaries without preloading the full simulation span.
  */
-export function sampleInertialOrbit(
+export function sampleInertialOrbitRange(
   sat: PropagatedSat,
-  centerTime: JulianDate,
-  paddingMinutes: number,
+  start: JulianDate,
+  stop: JulianDate,
   samplesPerRevolution = ORBIT_SAMPLES,
 ): { times: JulianDate[]; positions: Cartesian3[] } {
+  const spanSeconds = JulianDate.secondsDifference(stop, start);
+  if (!(spanSeconds > 0)) {
+    return { times: [], positions: [] };
+  }
+
   const periodSeconds = sat.periodMinutes * 60;
   const stepSeconds = periodSeconds / samplesPerRevolution;
-  const halfSpanSeconds = periodSeconds / 2 + paddingMinutes * 60;
-  const stepsEachSide = Math.ceil(halfSpanSeconds / stepSeconds);
+  const sampleStart = JulianDate.addSeconds(
+    start,
+    -stepSeconds,
+    new JulianDate(),
+  );
+  const sampleStop = JulianDate.addSeconds(
+    stop,
+    stepSeconds,
+    new JulianDate(),
+  );
+  const totalSeconds = JulianDate.secondsDifference(sampleStop, sampleStart);
+  const steps = Math.max(1, Math.ceil(totalSeconds / stepSeconds));
+
   const times: JulianDate[] = [];
   const positions: Cartesian3[] = [];
 
-  for (let i = -stepsEachSide; i <= stepsEachSide; i++) {
+  for (let i = 0; i <= steps; i++) {
     const t = JulianDate.addSeconds(
-      centerTime,
+      sampleStart,
       stepSeconds * i,
       new JulianDate(),
     );

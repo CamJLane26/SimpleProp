@@ -23,11 +23,14 @@ import "cesium/Build/Cesium/Widgets/widgets.css";
 import type { Satellite } from "../types";
 import {
   parseSatellite,
-  sampleInertialOrbit,
+  sampleInertialOrbitRange,
   type PropagatedSat,
 } from "../lib/sgp4";
-
-const SCRUB_HALF_MINUTES = 90;
+import {
+  RESAMPLE_MARGIN_MINUTES,
+  SAMPLE_HALF_MINUTES,
+  SIM_HALF_MINUTES,
+} from "../lib/timeConfig";
 
 type Props = {
   satellites: Satellite[];
@@ -49,6 +52,11 @@ type EntityBundle = {
   entity: Entity;
 };
 
+type ParsedTle = {
+  epoch: JulianDate;
+  propagated: PropagatedSat;
+};
+
 function isIss(noradId: number): boolean {
   return noradId === 25544;
 }
@@ -60,31 +68,8 @@ type PositionHistory = {
   resolution: CompositeProperty;
 };
 
-function createSampledProperty(
-  sat: PropagatedSat,
-  center: JulianDate,
-  paddingMinutes: number,
-): SampledPositionProperty {
-  const { times, positions } = sampleInertialOrbit(
-    sat,
-    center,
-    paddingMinutes,
-  );
-  const property = new SampledPositionProperty(ReferenceFrame.INERTIAL);
-  property.setInterpolationOptions({
-    interpolationAlgorithm:
-      LagrangePolynomialApproximation as unknown as InterpolationAlgorithm,
-    interpolationDegree: 5,
-  });
-  property.addSamples(times, positions);
-  return property;
-}
-
-function createPositionHistory(
-  satellite: Satellite,
-  center: JulianDate,
-): PositionHistory | null {
-  const parsed = satellite.tles
+function parseTleHistory(satellite: Satellite): ParsedTle[] {
+  return satellite.tles
     .map((tle) => {
       const epochDate = new Date(tle.epoch);
       const propagated = parseSatellite(
@@ -100,43 +85,86 @@ function createPositionHistory(
         propagated,
       };
     })
-    .filter(
-      (
-        entry,
-      ): entry is { epoch: JulianDate; propagated: PropagatedSat } =>
-        entry !== null,
-    )
+    .filter((entry): entry is ParsedTle => entry !== null)
     .sort((a, b) => JulianDate.compare(a.epoch, b.epoch));
+}
 
+/** Index of the TLE active at `time` (latest epoch ≤ time, else earliest). */
+function activeTleIndex(parsed: ParsedTle[], time: JulianDate): number {
+  let index = 0;
+  for (let i = 0; i < parsed.length; i++) {
+    if (JulianDate.compare(parsed[i].epoch, time) <= 0) {
+      index = i;
+    } else {
+      break;
+    }
+  }
+  return index;
+}
+
+function createSampledProperty(
+  sat: PropagatedSat,
+  start: JulianDate,
+  stop: JulianDate,
+): SampledPositionProperty {
+  const { times, positions } = sampleInertialOrbitRange(sat, start, stop);
+  const property = new SampledPositionProperty(ReferenceFrame.INERTIAL);
+  property.setInterpolationOptions({
+    interpolationAlgorithm:
+      LagrangePolynomialApproximation as unknown as InterpolationAlgorithm,
+    interpolationDegree: 5,
+  });
+  if (times.length > 0) {
+    property.addSamples(times, positions);
+  }
+  return property;
+}
+
+/**
+ * Build Cesium position/path properties for only the TLEs that overlap the
+ * local sample window around `center` — not the full simulation span.
+ */
+function createPositionHistory(
+  satellite: Satellite,
+  center: JulianDate,
+): PositionHistory | null {
+  const parsed = parseTleHistory(satellite);
   if (parsed.length === 0) return null;
 
   const maxPeriodMinutes = Math.max(
     ...parsed.map((entry) => entry.propagated.periodMinutes),
   );
-  const overallHalfSpanMinutes =
-    SCRUB_HALF_MINUTES + maxPeriodMinutes / 2;
+  const halfSpanMinutes = SAMPLE_HALF_MINUTES + maxPeriodMinutes / 2;
   const overallStart = JulianDate.addMinutes(
     center,
-    -overallHalfSpanMinutes,
+    -halfSpanMinutes,
     new JulianDate(),
   );
   const overallStop = JulianDate.addMinutes(
     center,
-    overallHalfSpanMinutes,
+    halfSpanMinutes,
     new JulianDate(),
   );
+
+  const startIdx = activeTleIndex(parsed, overallStart);
   const property = new CompositePositionProperty(ReferenceFrame.INERTIAL);
   const leadTime = new CompositeProperty();
   const trailTime = new CompositeProperty();
   const resolution = new CompositeProperty();
 
-  for (let i = 0; i < parsed.length; i++) {
+  for (let i = startIdx; i < parsed.length; i++) {
     const current = parsed[i];
     const next = parsed[i + 1];
+
+    if (
+      i > startIdx &&
+      JulianDate.compare(current.epoch, overallStop) >= 0
+    ) {
+      break;
+    }
+
     const start =
-      i === 0 || JulianDate.compare(current.epoch, overallStart) < 0
-        ? overallStart
-        : current.epoch;
+      i === startIdx ? overallStart : current.epoch;
     const stop =
       next && JulianDate.compare(next.epoch, overallStop) < 0
         ? next.epoch
@@ -144,13 +172,10 @@ function createPositionHistory(
 
     if (JulianDate.compare(start, stop) >= 0) continue;
 
-    const extraPadding =
-      SCRUB_HALF_MINUTES +
-      (maxPeriodMinutes - current.propagated.periodMinutes) / 2;
     const sampled = createSampledProperty(
       current.propagated,
-      center,
-      extraPadding,
+      start,
+      stop,
     );
     const isStopIncluded = !next || JulianDate.equals(stop, overallStop);
     const periodSeconds = current.propagated.periodMinutes * 60;
@@ -188,6 +213,13 @@ function createPositionHistory(
   return { property, leadTime, trailTime, resolution };
 }
 
+function minutesFromCenter(
+  time: JulianDate,
+  center: JulianDate,
+): number {
+  return Math.abs(JulianDate.secondsDifference(time, center) / 60);
+}
+
 export function Globe({
   satellites,
   visibleIds,
@@ -204,6 +236,7 @@ export function Globe({
   const viewerRef = useRef<Viewer | null>(null);
   const bundlesRef = useRef<Map<number, EntityBundle>>(new Map());
   const epochRef = useRef<JulianDate>(JulianDate.now());
+  const sampleCenterRef = useRef<JulianDate | null>(null);
   const visibleRef = useRef(visibleIds);
   const callbacksRef = useRef({
     onClockLabel,
@@ -211,12 +244,44 @@ export function Globe({
     onPlaybackEnd,
   });
 
+  const applyPositionHistory = (
+    bundle: EntityBundle,
+    center: JulianDate,
+  ) => {
+    const history = createPositionHistory(bundle.satellite, center);
+    if (!history) return;
+    bundle.entity.position = history.property;
+    if (bundle.entity.path) {
+      bundle.entity.path.leadTime = history.leadTime;
+      bundle.entity.path.trailTime = history.trailTime;
+      bundle.entity.path.resolution = history.resolution;
+    }
+  };
+
+  const resamplePositions = (center: JulianDate) => {
+    for (const bundle of bundlesRef.current.values()) {
+      applyPositionHistory(bundle, center);
+    }
+    sampleCenterRef.current = JulianDate.clone(center);
+  };
+
+  const needsResample = (time: JulianDate): boolean => {
+    const sampleCenter = sampleCenterRef.current;
+    if (!sampleCenter) return true;
+    return (
+      minutesFromCenter(time, sampleCenter) >
+      SAMPLE_HALF_MINUTES - RESAMPLE_MARGIN_MINUTES
+    );
+  };
+
+  const sampleApiRef = useRef({ needsResample, resamplePositions });
   visibleRef.current = visibleIds;
   callbacksRef.current = {
     onClockLabel,
     onOffsetFromClock,
     onPlaybackEnd,
   };
+  sampleApiRef.current = { needsResample, resamplePositions };
 
   useEffect(() => {
     if (!containerRef.current || viewerRef.current) return;
@@ -248,12 +313,12 @@ export function Globe({
     viewer.clock.currentTime = JulianDate.clone(epochRef.current);
     viewer.clock.startTime = JulianDate.addMinutes(
       epochRef.current,
-      -SCRUB_HALF_MINUTES,
+      -SIM_HALF_MINUTES,
       new JulianDate(),
     );
     viewer.clock.stopTime = JulianDate.addMinutes(
       epochRef.current,
-      SCRUB_HALF_MINUTES,
+      SIM_HALF_MINUTES,
       new JulianDate(),
     );
 
@@ -277,6 +342,10 @@ export function Globe({
         callbacksRef.current.onPlaybackEnd();
       }
 
+      if (sampleApiRef.current.needsResample(current)) {
+        sampleApiRef.current.resamplePositions(current);
+      }
+
       const nowMs = performance.now();
       if (!hitBoundary && nowMs - lastUiUpdateMs < 250) {
         return;
@@ -292,6 +361,7 @@ export function Globe({
     return () => {
       removeTick();
       bundlesRef.current.clear();
+      sampleCenterRef.current = null;
       if (!viewer.isDestroyed()) {
         viewer.destroy();
       }
@@ -358,6 +428,8 @@ export function Globe({
         entity,
       });
     }
+
+    sampleCenterRef.current = JulianDate.clone(center);
   }, [satellites]);
 
   useEffect(() => {
@@ -379,20 +451,7 @@ export function Globe({
     viewer.clock.multiplier = playbackMultiplier;
   }, [playbackMultiplier]);
 
-  const resamplePositions = (center: JulianDate) => {
-    for (const bundle of bundlesRef.current.values()) {
-      const history = createPositionHistory(bundle.satellite, center);
-      if (!history) continue;
-      bundle.entity.position = history.property;
-      if (bundle.entity.path) {
-        bundle.entity.path.leadTime = history.leadTime;
-        bundle.entity.path.trailTime = history.trailTime;
-        bundle.entity.path.resolution = history.resolution;
-      }
-    }
-  };
-
-  // User scrub / "Now" — apply once per nonce
+  // User scrub — jump clock and refresh samples if outside the buffer.
   useEffect(() => {
     if (scrubNonce === 0) return;
     const viewer = viewerRef.current;
@@ -404,9 +463,12 @@ export function Globe({
       new JulianDate(),
     );
     viewer.clock.currentTime = next;
+    if (sampleApiRef.current.needsResample(next)) {
+      sampleApiRef.current.resamplePositions(next);
+    }
   }, [scrubNonce, scrubOffsetMinutes]);
 
-  // Reset the epoch and scrub window so "Now" means wall-clock now.
+  // Reset the epoch and full sim window so "Now" means wall-clock now.
   useEffect(() => {
     if (resetToNowNonce === 0) return;
     const viewer = viewerRef.current;
@@ -416,18 +478,18 @@ export function Globe({
     epochRef.current = JulianDate.clone(now);
     viewer.clock.startTime = JulianDate.addMinutes(
       now,
-      -SCRUB_HALF_MINUTES,
+      -SIM_HALF_MINUTES,
       new JulianDate(),
     );
     viewer.clock.stopTime = JulianDate.addMinutes(
       now,
-      SCRUB_HALF_MINUTES,
+      SIM_HALF_MINUTES,
       new JulianDate(),
     );
     viewer.clock.currentTime = JulianDate.clone(now);
     callbacksRef.current.onClockLabel(JulianDate.toDate(now).toISOString());
     callbacksRef.current.onOffsetFromClock(0);
-    resamplePositions(now);
+    sampleApiRef.current.resamplePositions(now);
   }, [resetToNowNonce]);
 
   return <div className="globe" ref={containerRef} />;

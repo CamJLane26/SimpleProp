@@ -7,11 +7,16 @@ type Props = {
   onDirectionChange: (direction: PlaybackDirection) => void;
   speed: number;
   onSpeedChange: (speed: number) => void;
-  /** Minutes offset from session start (center = 0). */
+  /** Absolute minutes offset from session epoch. */
   offsetMinutes: number;
+  /** Visible scrubber window bounds (absolute minutes from epoch). */
   minMinutes: number;
   maxMinutes: number;
   onScrub: (offsetMinutes: number) => void;
+  /** Shift the visible 1-day window earlier/later. */
+  onPanWindow: (deltaMinutes: number) => void;
+  canPanEarlier: boolean;
+  canPanLater: boolean;
   onReset: () => void;
   clockLabel: string;
 };
@@ -30,6 +35,9 @@ export function TimeControls({
   minMinutes,
   maxMinutes,
   onScrub,
+  onPanWindow,
+  canPanEarlier,
+  canPanLater,
   onReset,
   clockLabel,
 }: Props) {
@@ -88,16 +96,36 @@ export function TimeControls({
         </span>
       </label>
 
-      <input
-        className="scrubber"
-        type="range"
-        min={minMinutes}
-        max={maxMinutes}
-        step={0.25}
-        value={offsetMinutes}
-        onChange={(e) => onScrub(Number(e.target.value))}
-        aria-label="Time scrubber"
-      />
+      <div className="scrub-group">
+        <button
+          type="button"
+          className="pan-btn"
+          disabled={!canPanEarlier}
+          onClick={() => onPanWindow(-24 * 60)}
+          aria-label="Pan timeline back one day"
+        >
+          ‹‹
+        </button>
+        <input
+          className="scrubber"
+          type="range"
+          min={minMinutes}
+          max={maxMinutes}
+          step={0.25}
+          value={offsetMinutes}
+          onChange={(e) => onScrub(Number(e.target.value))}
+          aria-label="Time scrubber (1-day window)"
+        />
+        <button
+          type="button"
+          className="pan-btn"
+          disabled={!canPanLater}
+          onClick={() => onPanWindow(24 * 60)}
+          aria-label="Pan timeline forward one day"
+        >
+          ››
+        </button>
+      </div>
       <time className="clock-label" dateTime={clockLabel}>
         {clockLabel}
       </time>

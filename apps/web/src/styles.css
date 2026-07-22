@@ -232,6 +232,24 @@ body,
   color: var(--muted);
 }
 
+.scrub-group {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 0.35rem;
+  align-items: center;
+  min-width: 0;
+}
+
+.pan-btn {
+  min-width: 2rem;
+  padding-inline: 0.35rem;
+}
+
+.pan-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
 .scrubber {
   width: 100%;
   accent-color: var(--accent);
@@ -260,7 +278,7 @@ body,
     grid-template-rows: auto auto auto;
   }
 
-  .scrubber {
+  .scrub-group {
     grid-column: 1 / -1;
   }
 

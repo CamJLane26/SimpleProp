@@ -1,6 +1,6 @@
 # SimpleProp — Cesium Satellite Globe
 
-Open demo: a React + CesiumJS globe that loads a fixed TLE catalog from Postgres through a TypeScript UI backend, propagates each satellite with **SGP4 in the browser** (`satellite.js`), and supports visibility toggles, play/pause, time scrubbing (±90 minutes), and one-revolution orbit trails.
+Open demo: a React + CesiumJS globe that loads a fixed TLE catalog from Postgres through a TypeScript UI backend, propagates each satellite with **SGP4 in the browser** (`satellite.js`), and supports visibility toggles, play/pause, a sliding **1-day** scrubber over a **±7.5 day** simulation window, and one-revolution orbit trails.
 
 No auth. Session view state (visible set, clock, trails) lives **only in the browser tab** — closing the tab discards it; nothing is written back to Postgres.
 
@@ -137,10 +137,14 @@ Read-only; no write endpoints.
 
 1. Fetch catalog once on mount.
 2. Parse each satellite's epoch-ordered TLE history with `satellite.js`. At a newer TLE's exact epoch, propagation switches to that TLE; times before the first epoch use the earliest available TLE.
-3. Cesium `Clock` drives time (default **1×** real-time; direction and speed are user-controlled).
-4. Cesium interpolates piecewise inertial SGP4 samples for both the marker and path, keeping motion smooth within each TLE segment without interpolating across an epoch switch.
-5. Orbit paths show one period (`2π / n` from the active TLE's mean motion). When an ion token is configured, Cesium World Terrain is enabled.
-6. Checklist toggles show/hide point + trail without refetching.
+3. Cesium `Clock` spans a configurable simulation window (**±7.5 days** by default, 15 days total) centered on session “Now.” Playback direction and speed are user-controlled (default **1×** real-time).
+4. The scrubber shows only a **1-day** sliding view (±12 hours). Playing or dragging against an edge pans that view across the full simulation; position samples are **not** preloaded for the whole span.
+5. The browser keeps roughly one day of inertial SGP4 samples around the playhead. When the clock leaves that buffer (scrub or play), samples are rebuilt and only TLEs that overlap the local window are used.
+6. Cesium interpolates piecewise within each TLE segment without interpolating across an epoch switch.
+7. Orbit paths show one period (`2π / n` from the active TLE's mean motion). When an ion token is configured, Cesium World Terrain is enabled.
+8. Checklist toggles show/hide point + trail without refetching.
+
+Window sizes live in `apps/web/src/lib/timeConfig.ts` (`SIM_HALF_MINUTES`, `SCRUB_VIEW_HALF_MINUTES`, `SAMPLE_HALF_MINUTES`).
 
 See [`TLE_TRANSITIONS.md`](TLE_TRANSITIONS.md) for the current hard-switch
 semantics and a future display-only blending design.

@@ -6,8 +6,15 @@ import {
   type PlaybackDirection,
 } from "./components/TimeControls";
 import { useSatellites } from "./hooks/useSatellites";
+import {
+  SCRUB_PAN_MINUTES,
+  SIM_HALF_MINUTES,
+  clampSimOffset,
+  clampViewCenter,
+  followPlayhead,
+  scrubViewBounds,
+} from "./lib/timeConfig";
 
-const SCRUB_HALF_MINUTES = 90;
 const DEFAULT_SPEED = 1;
 
 export default function App() {
@@ -19,6 +26,7 @@ export default function App() {
   const [speed, setSpeed] = useState(DEFAULT_SPEED);
   const [displayOffset, setDisplayOffset] = useState(0);
   const [scrubOffset, setScrubOffset] = useState(0);
+  const [viewCenter, setViewCenter] = useState(0);
   const [scrubNonce, setScrubNonce] = useState(0);
   const [resetToNowNonce, setResetToNowNonce] = useState(0);
   const [clockLabel, setClockLabel] = useState(() =>
@@ -36,6 +44,8 @@ export default function App() {
 
   const playbackMultiplier =
     (direction === "forward" ? 1 : -1) * speed;
+
+  const { min: viewMin, max: viewMax } = scrubViewBounds(viewCenter);
 
   const handleToggle = useCallback(
     (id: number) => {
@@ -58,24 +68,65 @@ export default function App() {
     setVisibleIds(new Set());
   }, []);
 
-  const applyScrub = useCallback((value: number) => {
-    const clamped = Math.max(
-      -SCRUB_HALF_MINUTES,
-      Math.min(SCRUB_HALF_MINUTES, value),
-    );
-    setScrubOffset(clamped);
-    setDisplayOffset(clamped);
-    setScrubNonce((n) => n + 1);
+  const handleOffsetFromClock = useCallback((offsetMinutes: number) => {
+    const offset = clampSimOffset(offsetMinutes);
+    setDisplayOffset(offset);
+    setViewCenter((center) => followPlayhead(offset, center));
   }, []);
 
-  const scrubberValue = Math.max(
-    -SCRUB_HALF_MINUTES,
-    Math.min(SCRUB_HALF_MINUTES, displayOffset),
+  const applyScrub = useCallback((value: number) => {
+    const { min, max } = scrubViewBounds(viewCenter);
+    let nextCenter = viewCenter;
+    let offset = clampSimOffset(value);
+
+    // Dragging against an edge pans the 1-day window across the sim.
+    if (offset >= max - 0.01) {
+      nextCenter = clampViewCenter(viewCenter + SCRUB_PAN_MINUTES);
+      const bounds = scrubViewBounds(nextCenter);
+      offset = Math.min(offset + SCRUB_PAN_MINUTES, bounds.max);
+      offset = Math.max(bounds.min, offset);
+    } else if (offset <= min + 0.01) {
+      nextCenter = clampViewCenter(viewCenter - SCRUB_PAN_MINUTES);
+      const bounds = scrubViewBounds(nextCenter);
+      offset = Math.max(offset - SCRUB_PAN_MINUTES, bounds.min);
+      offset = Math.min(bounds.max, offset);
+    } else {
+      offset = Math.max(min, Math.min(max, offset));
+    }
+
+    setViewCenter(nextCenter);
+    setScrubOffset(offset);
+    setDisplayOffset(offset);
+    setScrubNonce((n) => n + 1);
+  }, [viewCenter]);
+
+  const panWindow = useCallback(
+    (deltaMinutes: number) => {
+      const nextCenter = clampViewCenter(viewCenter + deltaMinutes);
+      const { min, max } = scrubViewBounds(nextCenter);
+      const offset = Math.max(min, Math.min(max, displayOffset));
+      setViewCenter(nextCenter);
+      if (offset !== displayOffset) {
+        setScrubOffset(offset);
+        setDisplayOffset(offset);
+        setScrubNonce((n) => n + 1);
+      }
+    },
+    [viewCenter, displayOffset],
   );
+
+  const scrubberValue = Math.max(
+    viewMin,
+    Math.min(viewMax, displayOffset),
+  );
+
+  const canPanEarlier = viewMin > -SIM_HALF_MINUTES + 0.01;
+  const canPanLater = viewMax < SIM_HALF_MINUTES - 0.01;
 
   const resetToNow = useCallback(() => {
     setScrubOffset(0);
     setDisplayOffset(0);
+    setViewCenter(0);
     setResetToNowNonce((n) => n + 1);
   }, []);
 
@@ -114,7 +165,7 @@ export default function App() {
               scrubNonce={scrubNonce}
               resetToNowNonce={resetToNowNonce}
               onClockLabel={setClockLabel}
-              onOffsetFromClock={setDisplayOffset}
+              onOffsetFromClock={handleOffsetFromClock}
               onPlaybackEnd={() => setPlaying(false)}
             />
           )}
@@ -130,9 +181,12 @@ export default function App() {
             speed={speed}
             onSpeedChange={setSpeed}
             offsetMinutes={scrubberValue}
-            minMinutes={-SCRUB_HALF_MINUTES}
-            maxMinutes={SCRUB_HALF_MINUTES}
+            minMinutes={viewMin}
+            maxMinutes={viewMax}
             onScrub={applyScrub}
+            onPanWindow={panWindow}
+            canPanEarlier={canPanEarlier}
+            canPanLater={canPanLater}
             onReset={resetToNow}
             clockLabel={clockLabel}
           />
