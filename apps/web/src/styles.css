@@ -106,6 +106,7 @@ body,
 .panel-actions {
   display: flex;
   gap: 0.4rem;
+  margin-top: 0.35rem;
 }
 
 .panel-actions button,
@@ -138,13 +139,46 @@ body,
   grid-template-columns: auto 1fr auto;
   gap: 0.5rem;
   align-items: center;
-  padding: 0.35rem 0.85rem;
-  cursor: pointer;
+  padding: 0.4rem 0.85rem;
   font-size: 0.8rem;
 }
 
 .sat-row:hover {
   background: rgba(56, 189, 248, 0.08);
+}
+
+.sat-check,
+.for-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.7rem;
+  user-select: none;
+}
+
+.for-check {
+  padding: 0.15rem 0.35rem;
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+}
+
+.for-check:has(input:checked) {
+  border-color: var(--accent-dim);
+  color: var(--accent);
+}
+
+.for-check.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.sat-info {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
 }
 
 .sat-name {

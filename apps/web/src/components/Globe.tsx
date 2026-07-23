@@ -18,6 +18,7 @@ import {
   Viewer,
   type Entity,
   type InterpolationAlgorithm,
+  type PositionProperty,
 } from "cesium";
 import "cesium/Build/Cesium/Widgets/widgets.css";
 import type { Satellite } from "../types";
@@ -27,6 +28,12 @@ import {
   type PropagatedSat,
 } from "../lib/sgp4";
 import {
+  createForConeGraphics,
+  createPositionHolder,
+  forConeColor,
+  forConeOutlineColor,
+} from "../lib/sensorCone";
+import {
   RESAMPLE_MARGIN_MINUTES,
   SAMPLE_HALF_MINUTES,
   SIM_HALF_MINUTES,
@@ -35,6 +42,7 @@ import {
 type Props = {
   satellites: Satellite[];
   visibleIds: Set<number>;
+  forVisibleIds: Set<number>;
   playing: boolean;
   /** Signed Cesium clock multiplier: positive forward, negative reverse. */
   playbackMultiplier: number;
@@ -47,9 +55,15 @@ type Props = {
   onPlaybackEnd: () => void;
 };
 
+type PositionHolder = {
+  current: PositionProperty | undefined;
+};
+
 type EntityBundle = {
   satellite: Satellite;
   entity: Entity;
+  forEntity: Entity;
+  positionHolder: PositionHolder;
 };
 
 type ParsedTle = {
@@ -223,6 +237,7 @@ function minutesFromCenter(
 export function Globe({
   satellites,
   visibleIds,
+  forVisibleIds,
   playing,
   playbackMultiplier,
   scrubOffsetMinutes,
@@ -238,6 +253,7 @@ export function Globe({
   const epochRef = useRef<JulianDate>(JulianDate.now());
   const sampleCenterRef = useRef<JulianDate | null>(null);
   const visibleRef = useRef(visibleIds);
+  const forVisibleRef = useRef(forVisibleIds);
   const callbacksRef = useRef({
     onClockLabel,
     onOffsetFromClock,
@@ -251,6 +267,7 @@ export function Globe({
     const history = createPositionHistory(bundle.satellite, center);
     if (!history) return;
     bundle.entity.position = history.property;
+    bundle.positionHolder.current = history.property;
     if (bundle.entity.path) {
       bundle.entity.path.leadTime = history.leadTime;
       bundle.entity.path.trailTime = history.trailTime;
@@ -276,6 +293,7 @@ export function Globe({
 
   const sampleApiRef = useRef({ needsResample, resamplePositions });
   visibleRef.current = visibleIds;
+  forVisibleRef.current = forVisibleIds;
   callbacksRef.current = {
     onClockLabel,
     onOffsetFromClock,
@@ -375,6 +393,7 @@ export function Globe({
 
     for (const bundle of bundlesRef.current.values()) {
       viewer.entities.remove(bundle.entity);
+      viewer.entities.remove(bundle.forEntity);
     }
     bundlesRef.current.clear();
 
@@ -386,6 +405,8 @@ export function Globe({
 
       const iss = isIss(sat.noradId);
       const { property: position } = history;
+      const positionHolder = createPositionHolder(position);
+      const cone = createForConeGraphics(positionHolder);
 
       const entity = viewer.entities.add({
         id: `sat-${sat.id}`,
@@ -423,9 +444,29 @@ export function Globe({
         show: visibleRef.current.has(sat.id),
       });
 
+      const forEntity = viewer.entities.add({
+        id: `for-${sat.id}`,
+        name: `${sat.name} FOR`,
+        position: cone.position,
+        orientation: cone.orientation,
+        cylinder: {
+          length: cone.length,
+          topRadius: 0,
+          bottomRadius: cone.bottomRadius,
+          material: forConeColor(iss),
+          outline: true,
+          outlineColor: forConeOutlineColor(iss),
+          numberOfVerticalLines: 12,
+          slices: 48,
+        },
+        show: forVisibleRef.current.has(sat.id) && visibleRef.current.has(sat.id),
+      });
+
       bundlesRef.current.set(sat.id, {
         satellite: sat,
         entity,
+        forEntity,
+        positionHolder,
       });
     }
 
@@ -434,10 +475,10 @@ export function Globe({
 
   useEffect(() => {
     for (const [id, bundle] of bundlesRef.current) {
-      const show = visibleIds.has(id);
-      bundle.entity.show = show;
+      bundle.entity.show = visibleIds.has(id);
+      bundle.forEntity.show = forVisibleIds.has(id) && visibleIds.has(id);
     }
-  }, [visibleIds]);
+  }, [visibleIds, forVisibleIds]);
 
   useEffect(() => {
     const viewer = viewerRef.current;

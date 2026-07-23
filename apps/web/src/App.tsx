@@ -20,6 +20,9 @@ const DEFAULT_SPEED = 1;
 export default function App() {
   const catalog = useSatellites();
   const [visibleIds, setVisibleIds] = useState<Set<number> | null>(null);
+  const [forVisibleIds, setForVisibleIds] = useState<Set<number> | null>(
+    null,
+  );
   const [playing, setPlaying] = useState(true);
   const [direction, setDirection] =
     useState<PlaybackDirection>("forward");
@@ -42,6 +45,11 @@ export default function App() {
     return new Set(satellites.map((s) => s.id));
   }, [visibleIds, satellites]);
 
+  const effectiveForVisible = useMemo(() => {
+    if (forVisibleIds) return forVisibleIds;
+    return new Set<number>();
+  }, [forVisibleIds]);
+
   const playbackMultiplier =
     (direction === "forward" ? 1 : -1) * speed;
 
@@ -49,15 +57,37 @@ export default function App() {
 
   const handleToggle = useCallback(
     (id: number) => {
+      const currentlyVisible = effectiveVisible.has(id);
       setVisibleIds((prev) => {
         const base = prev ?? new Set(satellites.map((s) => s.id));
         const next = new Set(base);
+        if (currentlyVisible) next.delete(id);
+        else next.add(id);
+        return next;
+      });
+      if (currentlyVisible) {
+        setForVisibleIds((forPrev) => {
+          if (!forPrev?.has(id)) return forPrev;
+          const forNext = new Set(forPrev);
+          forNext.delete(id);
+          return forNext;
+        });
+      }
+    },
+    [satellites, effectiveVisible],
+  );
+
+  const handleToggleFor = useCallback(
+    (id: number) => {
+      if (!effectiveVisible.has(id)) return;
+      setForVisibleIds((prev) => {
+        const next = new Set(prev ?? []);
         if (next.has(id)) next.delete(id);
         else next.add(id);
         return next;
       });
     },
-    [satellites],
+    [effectiveVisible],
   );
 
   const handleShowAll = useCallback(() => {
@@ -66,6 +96,15 @@ export default function App() {
 
   const handleHideAll = useCallback(() => {
     setVisibleIds(new Set());
+    setForVisibleIds(new Set());
+  }, []);
+
+  const handleShowAllFor = useCallback(() => {
+    setForVisibleIds(new Set(effectiveVisible));
+  }, [effectiveVisible]);
+
+  const handleHideAllFor = useCallback(() => {
+    setForVisibleIds(new Set());
   }, []);
 
   const handleOffsetFromClock = useCallback((offsetMinutes: number) => {
@@ -149,9 +188,13 @@ export default function App() {
         <SatellitePanel
           satellites={satellites}
           visibleIds={effectiveVisible}
+          forVisibleIds={effectiveForVisible}
           onToggle={handleToggle}
+          onToggleFor={handleToggleFor}
           onShowAll={handleShowAll}
           onHideAll={handleHideAll}
+          onShowAllFor={handleShowAllFor}
+          onHideAllFor={handleHideAllFor}
         />
 
         <div className="stage">
@@ -159,6 +202,7 @@ export default function App() {
             <Globe
               satellites={satellites}
               visibleIds={effectiveVisible}
+              forVisibleIds={effectiveForVisible}
               playing={playing}
               playbackMultiplier={playbackMultiplier}
               scrubOffsetMinutes={scrubOffset}

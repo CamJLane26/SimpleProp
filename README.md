@@ -1,6 +1,6 @@
 # SimpleProp — Cesium Satellite Globe
 
-Open demo: a React + CesiumJS globe that loads a fixed TLE catalog from Postgres through a TypeScript UI backend, propagates each satellite with **SGP4 in the browser** (`satellite.js`), and supports visibility toggles, play/pause, a sliding **1-day** scrubber over a **±7.5 day** simulation window, and one-revolution orbit trails.
+Open demo: a React + CesiumJS globe that loads a fixed TLE catalog from Postgres through a TypeScript UI backend, propagates each satellite with **SGP4 in the browser** (`satellite.js`), and supports visibility toggles, play/pause, a sliding **1-day** scrubber over a **±7.5 day** simulation window, one-revolution orbit trails, and per-satellite **30° half-angle** nadir sensor FOR cones.
 
 No auth. Session view state (visible set, clock, trails) lives **only in the browser tab** — closing the tab discards it; nothing is written back to Postgres.
 
@@ -142,9 +142,11 @@ Read-only; no write endpoints.
 5. The browser keeps roughly one day of inertial SGP4 samples around the playhead. When the clock leaves that buffer (scrub or play), samples are rebuilt and only TLEs that overlap the local window are used.
 6. Cesium interpolates piecewise within each TLE segment without interpolating across an epoch switch.
 7. Orbit paths show one period (`2π / n` from the active TLE's mean motion). When an ion token is configured, Cesium World Terrain is enabled.
-8. Checklist toggles show/hide point + trail without refetching.
+8. Checklist toggles show/hide point + trail without refetching. A separate per-satellite **FOR** toggle draws a nadir-pointing sensor cone (30° half-angle off nadir) that follows the satellite via Cesium callback properties.
+9. The MVP seed catalog is ~15 LEO satellites (ISS, HST, Terra, Sentinel-3A, Starlink samples, etc.).
 
 Window sizes live in `apps/web/src/lib/timeConfig.ts` (`SIM_HALF_MINUTES`, `SCRUB_VIEW_HALF_MINUTES`, `SAMPLE_HALF_MINUTES`).
+FOR geometry helpers live in `apps/web/src/lib/sensorCone.ts`.
 
 See [`TLE_TRANSITIONS.md`](TLE_TRANSITIONS.md) for the current hard-switch
 semantics and a future display-only blending design.
@@ -163,7 +165,7 @@ Client-side SGP4 (this repo) is preferred for dozens–~100 satellites and many 
 
 ## Out of scope (v1)
 
-Auth, persisted satellite sets, multi-tenant catalogs, TLE admin UI, synced multi-user views, ground tracks, sensor FOV, non-SGP4 force models, cloud deploy beyond Compose.
+Auth, persisted satellite sets, multi-tenant catalogs, TLE admin UI, synced multi-user views, ground-track polygons, non-SGP4 force models, cloud deploy beyond Compose.
 
 ## Data source note
 
